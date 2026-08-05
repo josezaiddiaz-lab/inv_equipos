@@ -1,0 +1,298 @@
+from datetime import datetime
+import io
+import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import streamlit as st
+
+# Configuración de la página para que ocupe todo el ancho
+st.set_page_config(
+    page_title="Control de Inventario y Equipos", page_icon="💻", layout="wide"
+)
+
+st.title("📋 Sistema de Control e Inventario de Equipos")
+st.markdown(
+    "Gestiona el ingreso, reparación y salida de equipos tal como en tu hoja de registro."
+)
+
+# Archivo local para persistencia simple de datos
+DATA_FILE = "inventario_equipos.csv"
+
+
+def cargar_datos():
+  try:
+    return pd.read_csv(DATA_FILE)
+  except FileNotFoundError:
+    data = {
+        "Cliente": [
+            "HEYDI",
+            "AUTOIDEAL",
+            "AHUFE MATERIALES",
+            "HEYDI",
+            "EMANUEL",
+            "IOSSIFT",
+        ],
+        "Tipo de equipo": [
+            "IMPRESORA",
+            "IMPRESORA",
+            "IMPRESORA",
+            "IMPRESORA",
+            "LAPTOP",
+            "IMPRESORA",
+        ],
+        "Serie": [
+            "06YJB8GDBB0OPVB",
+            "X644060753",
+            "KPLM09739",
+            "074FB8GJAF01CSN",
+            "PF1EUMOV",
+            "XBBV316499",
+        ],
+        "Marca": ["SAMSUNG", "EPSON", "CANON", "SAMSUNG", "LENOVO", "EPSON"],
+        "Modelo": ["M2022", "L3110", "G2110", "M2020", "IDEAPAD 330", "L5590"],
+        "Diagnóstico": [
+            "SENSOR DAÑADO",
+            "ESCANER (COMPLETO), BANDA, PLACA LOGICA, FUENTE DE PODER",
+            "ERROR DE CONTADOR DE ALMOHADILLAS",
+            "RODILLO DE PRESION DAÑADO",
+            "BOTON DE ENCENDIDO DAÑADO (TECLADO)",
+            "MARCABA ERROR 034004 Y GOLPETEABA AL MOMENTO DE ENCENDERLA",
+        ],
+        "Observaciones": [
+            "SE REPARO",
+            "SE CAMBIARON PIEZAS",
+            "SE SOLUCIONO",
+            "-",
+            "-",
+            (
+                "SE LE DIO MANTENIMIENTO, DANDOLE LIMPIEZA, DESTAPE DE CABEZAL,"
+                " SE CAMBIA CAJA DE MANTENIMIENTO"
+            ),
+        ],
+        "Fecha ingreso": [
+            "25/11/2025",
+            "12/02/2026",
+            "13/02/2026",
+            "17/02/2026",
+            "17/02/2026",
+            "23/02/2026",
+        ],
+        "Fecha salida": [
+            "",
+            "",
+            "20/02/2026",
+            "",
+            "",
+            "23/2/2026",
+        ],
+        "Estado": [
+            "Reparado",
+            "Reparado",
+            "Reparado",
+            "Pendiente",
+            "Pendiente",
+            "Reparado",
+        ],
+    }
+    df_inicial = pd.DataFrame(data)
+    df_inicial.to_csv(DATA_FILE, index=False)
+    return df_inicial
+
+
+df = cargar_datos()
+
+# Sidebar para agregar nuevos registros
+st.sidebar.header("➕ Agregar Nuevo Equipo")
+with st.sidebar.form("form_nuevo", clear_on_submit=True):
+  c_cliente = st.text_input("Cliente")
+  c_tipo = st.text_input("Tipo de equipo")
+  c_serie = st.text_input("Serie")
+  c_marca = st.text_input("Marca")
+  c_modelo = st.text_input("Modelo")
+  c_diagnostico = st.text_area("Diagnóstico")
+  c_observaciones = st.text_area("Observaciones")
+  c_f_ingreso = st.date_input(
+      "Fecha ingreso", value=datetime.today()
+  ).strftime("%d/%m/%Y")
+  c_f_salida = st.text_input("Fecha salida (Opcional, dd/mm/aaaa)")
+  c_estado = st.selectbox("Estado", ["Pendiente", "Reparado"])
+
+  submit = st.form_submit_button("Guardar Equipo")
+
+  if submit:
+    nuevo_registro = pd.DataFrame({
+        "Cliente": [c_cliente.upper()],
+        "Tipo de equipo": [c_tipo.upper()],
+        "Serie": [c_serie.upper()],
+        "Marca": [c_marca.upper()],
+        "Modelo": [c_modelo.upper()],
+        "Diagnóstico": [c_diagnostico.upper()],
+        "Observaciones": [c_observaciones.upper()],
+        "Fecha ingreso": [c_f_ingreso],
+        "Fecha salida": [c_f_salida],
+        "Estado": [c_estado],
+    })
+    df = pd.concat([df, nuevo_registro], ignore_index=True)
+    df.to_csv(DATA_FILE, index=False)
+    st.sidebar.success("¡Equipo agregado con éxito!")
+    st.rerun()
+
+# Filtros rápidos de búsqueda
+st.subheader("🔍 Filtros de Búsqueda")
+col1, col2, col3 = st.columns(3)
+with col1:
+  filtro_cliente = st.text_input("Buscar por Cliente")
+with col2:
+  filtro_estado = st.selectbox("Filtrar por Estado", ["Todos", "Pendiente", "Reparado"])
+with col3:
+  filtro_serie = st.text_input("Buscar por Serie")
+
+# Aplicar filtros
+df_filtrado = df.copy()
+if filtro_cliente:
+  df_filtrado = df_filtrado[
+      df_filtrado["Cliente"]
+      .str.contains(filtro_cliente, case=False, na=False)
+  ]
+if filtro_estado != "Todos":
+  df_filtrado = df_filtrado[df_filtrado["Estado"] == filtro_estado]
+if filtro_serie:
+  df_filtrado = df_filtrado[
+      df_filtrado["Serie"].str.contains(filtro_serie, case=False, na=False)
+  ]
+
+st.subheader("📊 Tabla de Inventario (Editable y con opción de borrar filas)")
+st.info(
+    "💡 Puedes hacer clic en cualquier celda para editarla, o seleccionar filas y"
+    " presionar la tecla 'Supr' / usar el botón de papelera para borradas. Los"
+    " cambios se guardan automáticamente."
+)
+
+# Tabla interactiva con st.data_editor para permitir edición y borrado directo
+df_editado = st.data_editor(
+    df_filtrado,
+    use_container_width=True,
+    num_rows="dynamic",  # Permite agregar o eliminar filas directamente desde la tabla si se desea
+    key="tabla_inventario_editor",
+)
+
+# Si el usuario modifica, borra o actualiza algo en la tabla interactiva
+if not df_editado.equals(df_filtrado):
+  # Si estamos usando filtros, actualizamos únicamente las filas correspondientes o reemplazamos el dataset global
+  # Para mantenerlo sincronizado de forma segura con el archivo CSV completo:
+  if filtro_cliente or filtro_estado != "Todos" or filtro_serie:
+    # Actualizamos el dataframe principal con los cambios hechos en el filtrado
+    df.update(df_editado)
+    # Si se eliminaron filas en la vista filtrada, sincronizamos por índices comunes
+    df = df.loc[df.index.intersection(df_editado.index)]
+  else:
+    df = df_editado
+
+  # Guardar los cambios directamente en el archivo CSV
+  df.to_csv(DATA_FILE, index=False)
+  st.success("¡Cambios guardados y sincronizados correctamente con el archivo!")
+  st.rerun()
+
+
+# --- FUNCIÓN PARA GENERAR EL PDF ---
+def generar_pdf(dataframe_filtrado, estado_filtro):
+  buffer = io.BytesIO()
+  doc = SimpleDocTemplate(
+      buffer,
+      pagesize=landscape(letter),
+      rightMargin=30,
+      leftMargin=30,
+      topMargin=30,
+      bottomMargin=30,
+  )
+  elements = []
+
+  styles = getSampleStyleSheet()
+  title_style = ParagraphStyle(
+      'TitleStyle',
+      parent=styles['Heading1'],
+      fontSize=18,
+      alignment=1,
+      textColor=colors.HexColor('#1f3a93'),
+  )
+
+  elements.append(Paragraph("Reporte de Inventario de Equipos", title_style))
+  elements.append(Spacer(1, 10))
+  elements.append(
+      Paragraph(
+          f"<b>Filtro de Estado aplicado:</b> {estado_filtro} | <b>Fecha de"
+          f" emisión:</b> {datetime.today().strftime('%d/%m/%Y')}",
+          styles['Normal'],
+      )
+  )
+  elements.append(Spacer(1, 15))
+
+  columnas_mostrar = [
+      "Cliente",
+      "Tipo de equipo",
+      "Serie",
+      "Marca",
+      "Modelo",
+      "Diagnóstico",
+      "Estado",
+  ]
+  # Validar que las columnas existan antes de seleccionarlas
+  columnas_existentes = [
+      col for col in columnas_mostrar if col in dataframe_filtrado.columns
+  ]
+  df_pdf = dataframe_filtrado[columnas_existentes].copy()
+
+  style_cell = ParagraphStyle(
+      'CellText', parent=styles['Normal'], fontSize=9, leading=11
+  )
+  style_header = ParagraphStyle(
+      'HeaderText',
+      parent=styles['Normal'],
+      fontSize=9,
+      leading=11,
+      textColor=colors.whitesmoke,
+      alignment=1,
+  )
+
+  data = [[Paragraph(f'<b>{col}</b>', style_header) for col in df_pdf.columns]]
+
+  for _, row in df_pdf.iterrows():
+    data.append([Paragraph(str(val), style_cell) for val in row])
+
+  table = Table(data, colWidths=[100, 80, 90, 70, 70, 200, 70])
+  table.setStyle(
+      TableStyle([
+          ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+          ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+          ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+          ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+          ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+          ('TOPPADDING', (0, 0), (-1, 0), 8),
+          (
+              'ROWBACKGROUNDS',
+              (0, 1),
+              (-1, -1),
+              [colors.white, colors.HexColor('#f8f9fa')],
+          ),
+          ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+      ])
+  )
+
+  elements.append(table)
+  doc.build(elements)
+  buffer.seek(0)
+  return buffer
+
+
+if not df_filtrado.empty:
+  pdf_data = generar_pdf(df_filtrado, filtro_estado)
+  st.download_button(
+      label="📥 Descargar Inventario Filtrado en PDF",
+      data=pdf_data,
+      file_name=f"inventario_estado_{filtro_estado.lower()}.pdf",
+      mime="application/pdf",
+  )
+else:
+  st.warning("No hay registros para mostrar con los filtros actuales.")
