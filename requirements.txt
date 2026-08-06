@@ -4,4 +4,3 @@ reportlab
 gspread
 oauth2client
 openpyxl
-streamlit-gsheets
